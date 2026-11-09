@@ -1,0 +1,14 @@
+{
+	"name": "pi-web-kimi-relay",
+	"private": true,
+	"version": "0.0.1",
+	"description": "Minimal Worker → api.kimi.com relay (bypasses Cloudflare Workers IP block)",
+	"type": "module",
+	"scripts": {
+		"start": "node server.mjs",
+		"dev": "RELAY_TOKEN=dev-relay-123 PORT=8788 node server.mjs"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}
