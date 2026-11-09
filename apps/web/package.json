@@ -1,0 +1,21 @@
+{
+	"name": "pi-web",
+	"private": true,
+	"version": "0.0.1",
+	"description": "Web chat for pi: Cloudflare Worker + PostgreSQL storage",
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"pg": "8.23.1"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "5.20261109.1",
+		"@types/pg": "8.23.1",
+		"typescript": "7.0.2",
+		"wrangler": "4.155.0"
+	}
+}

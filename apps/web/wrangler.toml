@@ -1,0 +1,14 @@
+name = "pi-web"
+main = "src/worker.ts"
+compatibility_date = "2025-10-01"
+# pg (node-postgres) needs node:net/node:crypto shims on Workers.
+compatibility_flags = ["nodejs_compat"]
+
+# Static chat UI. Asset paths win over the Worker; /api/* has no matching asset
+# and falls through to the Worker automatically.
+assets = { directory = "public" }
+
+# Secrets (never commit):
+#   wrangler secret put DATABASE_URL
+#   wrangler secret put PI_WEB_TOKEN
+# Local dev: put them in .dev.vars next to this file.

@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi web</title>
+<style>
+	:root {
+		--bg: #0f1115;
+		--panel: #171a21;
+		--panel-2: #1e222b;
+		--border: #2a2f3a;
+		--text: #dde1e8;
+		--muted: #8a91a0;
+		--accent: #5b9dff;
+		--accent-hover: #7cb1ff;
+		--danger: #e06060;
+	}
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body { height: 100%; }
+	body {
+		font: 14px/1.6 -apple-system, "SF Pro", "PingFang SC", "Segoe UI", sans-serif;
+		background: var(--bg);
+		color: var(--text);
+	}
+	button {
+		font: inherit; color: var(--text); background: var(--panel-2);
+		border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer;
+	}
+	button:hover { border-color: var(--accent); }
+	button:disabled { opacity: 0.5; cursor: default; }
+	button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d12; font-weight: 600; }
+	button.primary:hover { background: var(--accent-hover); }
+	input, select, textarea {
+		font: inherit; color: var(--text); background: var(--bg);
+		border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; outline: none;
+	}
+	input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+
+	#app { display: flex; height: 100vh; }
+
+	#sidebar {
+		width: 260px; flex-shrink: 0; display: flex; flex-direction: column;
+		background: var(--panel); border-right: 1px solid var(--border);
+	}
+	.side-head { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid var(--border); }
+	.side-head .brand { font-weight: 700; letter-spacing: 0.5px; }
+	#conv-list { flex: 1; overflow-y: auto; padding: 6px; }
+	.conv-item {
+		padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px;
+		display: flex; justify-content: space-between; align-items: center; gap: 8px;
+	}
+	.conv-item:hover { background: var(--panel-2); }
+	.conv-item.active { background: var(--panel-2); outline: 1px solid var(--border); }
+	.conv-item .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+	.conv-item .meta { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+	.conv-item .del { visibility: hidden; color: var(--muted); border: none; background: none; padding: 0 4px; }
+	.conv-item:hover .del { visibility: visible; }
+	.conv-item .del:hover { color: var(--danger); }
+	.side-foot { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+	.side-foot button { flex: 1; }
+
+	#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+	#topbar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); align-items: center; }
+	#topbar label { color: var(--muted); font-size: 12px; }
+	#provider { width: 130px; }
+	#model { flex: 1; max-width: 320px; }
+
+	#messages { flex: 1; overflow-y: auto; padding: 18px 22vw 18px 24px; }
+	@media (max-width: 900px) { #messages { padding: 14px; } }
+	.msg { margin-bottom: 18px; }
+	.msg .role { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+	.msg .bubble {
+		padding: 10px 14px; border-radius: 10px; background: var(--panel);
+		border: 1px solid var(--border); overflow-wrap: break-word;
+	}
+	.msg.user .bubble { background: var(--panel-2); }
+	.msg.assistant .bubble pre {
+		background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+		padding: 10px; overflow-x: auto; margin: 8px 0;
+	}
+	.msg .bubble code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+	.msg .bubble p { margin: 6px 0; }
+	.msg .bubble p:first-child { margin-top: 0; }
+	.msg .bubble p:last-child { margin-bottom: 0; }
+	.msg .foot { font-size: 11px; color: var(--muted); margin-top: 4px; }
+	.msg .bubble.streaming::after { content: "▌"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+	@keyframes blink { 50% { opacity: 0; } }
+	#empty-hint { color: var(--muted); text-align: center; margin-top: 15vh; }
+
+	#composer { display: flex; gap: 10px; padding: 14px 24px 18px; border-top: 1px solid var(--border); background: var(--panel); }
+	#input { flex: 1; resize: none; min-height: 44px; max-height: 200px; }
+	#send { align-self: flex-end; padding: 8px 22px; }
+
+	.overlay {
+		position: fixed; inset: 0; background: rgba(6, 8, 12, 0.8); z-index: 10;
+		display: flex; align-items: center; justify-content: center;
+	}
+	.overlay.hidden, .modal.hidden { display: none; }
+	.dialog { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 360px; }
+	.dialog h2 { font-size: 16px; margin-bottom: 14px; }
+	.dialog input { width: 100%; margin-bottom: 12px; }
+	.dialog button { width: 100%; }
+	.dialog .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+	.dialog .error { color: var(--danger); font-size: 12px; margin-top: 10px; min-height: 16px; }
+
+	.modal {
+		position: fixed; inset: 0; background: rgba(6, 8, 12, 0.7); z-index: 10;
+		display: flex; align-items: center; justify-content: center;
+	}
+	.modal .box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 560px; max-height: 80vh; overflow-y: auto; }
+	.modal h2 { font-size: 16px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
+	.modal h2 button { width: auto; }
+	.key-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+	.key-form input, .key-form select { width: 100%; }
+	.key-form .wide { grid-column: 1 / -1; }
+	#key-list .key-row {
+		display: flex; justify-content: space-between; align-items: center;
+		padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px;
+	}
+	#key-list .key-row .info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#key-list .key-row .info .label { font-weight: 600; }
+	#key-list .key-row .info .sub { color: var(--muted); font-size: 12px; }
+	#key-list .key-row button { color: var(--danger); flex-shrink: 0; }
+	#key-list .empty { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app">
+	<aside id="sidebar">
+		<div class="side-head">
+			<span class="brand">pi web</span>
+			<button id="new-chat">新对话</button>
+		</div>
+		<div id="conv-list"></div>
+		<div class="side-foot">
+			<button id="open-keys">API Keys</button>
+			<button id="logout">退出</button>
+		</div>
+	</aside>
+	<main id="main">
+		<div id="topbar">
+			<label for="provider">模型</label>
+			<select id="provider">
+				<option value="anthropic">Anthropic</option>
+				<option value="openai">OpenAI 兼容</option>
+				<option value="google">Google</option>
+				<option value="kimi">Kimi</option>
+			</select>
+			<input id="model" list="model-list" placeholder="模型 id，如 claude-opus-5">
+			<datalist id="model-list"></datalist>
+		</div>
+		<div id="messages"></div>
+		<div id="composer">
+			<textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+			<button id="send" class="primary">发送</button>
+		</div>
+	</main>
+</div>
+
+<div id="login" class="overlay hidden">
+	<div class="dialog">
+		<h2>访问口令</h2>
+		<input id="token-input" type="password" placeholder="PI_WEB_TOKEN" autocomplete="off">
+		<button id="token-submit" class="primary">进入</button>
+		<div class="error" id="login-error"></div>
+		<div class="hint">口令由部署者设置，仅保存在本浏览器。</div>
+	</div>
+</div>
+
+<div id="keys-modal" class="modal hidden">
+	<div class="box">
+		<h2>API Keys <button id="close-keys">关闭</button></h2>
+		<form class="key-form" id="key-form">
+			<select id="key-provider">
+				<option value="anthropic">Anthropic</option>
+				<option value="openai">OpenAI 兼容</option>
+				<option value="google">Google</option>
+				<option value="kimi">Kimi</option>
+			</select>
+			<input id="key-label" placeholder="备注（可选）">
+			<input id="key-value" class="wide" placeholder="API Key" autocomplete="off">
+			<input id="key-base-url" class="wide hidden" placeholder="Base URL（OpenAI 兼容，默认 https://api.openai.com/v1）">
+			<button class="primary wide" type="submit">添加</button>
+		</form>
+		<div id="key-list"></div>
+	</div>
+</div>
+
+<script>
+"use strict";
+
+const MODELS = {
+	anthropic: ["claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5.5"],
+	openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
+	google: ["gemini-3.5-flash", "gemini-flash-latest"],
+	kimi: ["kimi-for-coding", "k3.1-pro", "k3", "k3-256k"],
+};
+
+const state = {
+	token: localStorage.getItem("pi_web_token") || "",
+	conversationId: "",
+	streaming: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const messagesEl = $("messages");
+const inputEl = $("input");
+const providerEl = $("provider");
+const modelEl = $("model");
+
+function authHeaders() {
+	return { authorization: `Bearer ${state.token}`, "content-type": "application/json" };
+}
+
+async function api(path, options = {}) {
+	const res = await fetch(path, {
+		...options,
+		headers: { ...authHeaders(), ...(options.headers || {}) },
+	});
+	if (res.status === 401) {
+		showLogin();
+		throw new Error("unauthorized");
+	}
+	const body = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+	return body;
+}
+
+// --- login ---
+
+function showLogin() {
+	state.token = "";
+	localStorage.removeItem("pi_web_token");
+	$("login").classList.remove("hidden");
+	$("login-error").textContent = "";
+}
+
+async function submitToken() {
+	const token = $("token-input").value.trim();
+	if (!token) return;
+	state.token = token;
+	try {
+		await api("/api/health");
+		localStorage.setItem("pi_web_token", token);
+		$("login").classList.add("hidden");
+		await refreshAll();
+	} catch (error) {
+		if (error.message !== "unauthorized") $("login-error").textContent = error.message;
+		state.token = "";
+	}
+}
+
+$("token-submit").addEventListener("click", submitToken);
+$("token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") submitToken(); });
+$("logout").addEventListener("click", showLogin);
+
+// --- conversations ---
+
+async function refreshAll() {
+	await Promise.all([refreshConversations(), loadKeys()]);
+	if (!modelEl.value) applyModelDefaults();
+}
+
+async function refreshConversations() {
+	const list = await api("/api/conversations");
+	const el = $("conv-list");
+	el.innerHTML = "";
+	for (const conv of list) {
+		const item = document.createElement("div");
+		item.className = "conv-item" + (conv.id === state.conversationId ? " active" : "");
+		const time = conv.updated_at ? conv.updated_at.slice(5, 16).replace("T", " ") : "";
+		item.innerHTML =
+			`<span class="title"></span><span class="meta">${escapeHtml(conv.model || "")} ${escapeHtml(time)}</span>` +
+			`<button class="del" title="删除">×</button>`;
+		item.querySelector(".title").textContent = conv.title || "未命名";
+		item.querySelector(".del").addEventListener("click", async (e) => {
+			e.stopPropagation();
+			if (!confirm("删除该对话？")) return;
+			await api(`/api/conversations/${conv.id}`, { method: "DELETE" });
+			if (state.conversationId === conv.id) newChat();
+			refreshConversations();
+		});
+		item.addEventListener("click", () => selectConversation(conv));
+		el.appendChild(item);
+	}
+}
+
+async function selectConversation(conv) {
+	if (state.streaming) return;
+	state.conversationId = conv.id;
+	providerEl.value = conv.provider || providerEl.value;
+	applyModelDefaults();
+	modelEl.value = conv.model || modelEl.value;
+	const messages = await api(`/api/conversations/${conv.id}/messages`);
+	messagesEl.innerHTML = "";
+	for (const msg of messages) appendMessage(msg.role, msg.content, msg);
+	refreshConversations();
+}
+
+function newChat() {
+	if (state.streaming) return;
+	state.conversationId = "";
+	messagesEl.innerHTML = `<div id="empty-hint">开始新对话。API Key 在左下角「API Keys」中添加。</div>`;
+	refreshConversations();
+}
+
+$("new-chat").addEventListener("click", newChat);
+
+// --- provider / model ---
+
+function applyModelDefaults() {
+	const provider = providerEl.value;
+	const datalist = $("model-list");
+	datalist.innerHTML = "";
+	for (const m of MODELS[provider]) {
+		const opt = document.createElement("option");
+		opt.value = m;
+		datalist.appendChild(opt);
+	}
+	const saved = localStorage.getItem(`pi_web_model_${provider}`);
+	modelEl.value = saved || MODELS[provider][0];
+	$("key-base-url").classList.toggle("hidden", $("key-provider").value !== "openai");
+}
+
+providerEl.addEventListener("change", () => {
+	applyModelDefaults();
+	localStorage.setItem("pi_web_provider", providerEl.value);
+});
+modelEl.addEventListener("change", () => {
+	localStorage.setItem(`pi_web_model_${providerEl.value}`, modelEl.value.trim());
+});
+$("key-provider").addEventListener("change", () => {
+	$("key-base-url").classList.toggle("hidden", $("key-provider").value !== "openai");
+});
+
+const savedProvider = localStorage.getItem("pi_web_provider");
+if (savedProvider && MODELS[savedProvider]) providerEl.value = savedProvider;
+
+// --- rendering ---
+
+function escapeHtml(text) {
+	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Minimal markdown: fenced code, inline code, bold, paragraphs. Input is escaped first.
+function renderMarkdown(text) {
+	const escaped = escapeHtml(text);
+	const segments = escaped.split("```");
+	let html = "";
+	for (let i = 0; i < segments.length; i++) {
+		if (i % 2 === 1) {
+			const nl = segments[i].indexOf("\n");
+			const code = (nl === -1 ? segments[i] : segments[i].slice(nl + 1)).replace(/\n$/, "");
+			html += `<pre><code>${code}</code></pre>`;
+		} else {
+			html += segments[i]
+				.split(/\n{2,}/)
+				.map((paragraph) =>
+					`<p>${paragraph.replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>")}</p>`,
+				)
+				.join("");
+		}
+	}
+	return html;
+}
+
+function appendMessage(role, content, meta = {}) {
+	const empty = $("empty-hint");
+	if (empty) empty.remove();
+	const div = document.createElement("div");
+	div.className = `msg ${role}`;
+	const foot = meta.model ? `<div class="foot">${escapeHtml(meta.model)} · ${meta.tokens_out || 0} tokens</div>` : "";
+	div.innerHTML = `<div class="role">${role === "user" ? "你" : "助手"}</div><div class="bubble${meta.streaming ? " streaming" : ""}"></div>${foot}`;
+	div.querySelector(".bubble").innerHTML = renderMarkdown(content);
+	messagesEl.appendChild(div);
+	scrollBottom();
+	return div.querySelector(".bubble");
+}
+
+function scrollBottom() {
+	messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function nearBottom() {
+	return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+}
+
+// --- chat ---
+
+async function send() {
+	const content = inputEl.value.trim();
+	if (!content || state.streaming) return;
+	inputEl.value = "";
+	state.streaming = true;
+	$("send").disabled = true;
+
+	appendMessage("user", content);
+	const bubble = appendMessage("assistant", "", { streaming: true });
+	let text = "";
+
+	try {
+		const res = await fetch("/api/chat", {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({
+				conversationId: state.conversationId || undefined,
+				provider: providerEl.value,
+				model: modelEl.value.trim(),
+				content,
+			}),
+		});
+		if (!res.ok || !res.body) {
+			const err = await res.json().catch(() => ({}));
+			throw new Error(err.error || `HTTP ${res.status}`);
+		}
+		const reader = res.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			for (let sep = buffer.indexOf("\n\n"); sep !== -1; sep = buffer.indexOf("\n\n")) {
+				const raw = buffer.slice(0, sep);
+				buffer = buffer.slice(sep + 2);
+				if (!raw.startsWith("data:")) continue;
+				const event = JSON.parse(raw.slice(5).trimStart());
+				if (event.type === "meta") {
+					state.conversationId = event.conversationId;
+					refreshConversations();
+				} else if (event.type === "delta") {
+					text += event.text;
+					const stick = nearBottom();
+					bubble.innerHTML = renderMarkdown(text);
+					bubble.classList.add("streaming");
+					if (stick) scrollBottom();
+				} else if (event.type === "done") {
+					bubble.classList.remove("streaming");
+					if (event.tokensIn || event.tokensOut) {
+						const foot = document.createElement("div");
+						foot.className = "foot";
+						foot.textContent = `${modelEl.value.trim()} · ${event.tokensIn}+${event.tokensOut} tokens`;
+						bubble.parentElement.appendChild(foot);
+					}
+				} else if (event.type === "error") {
+					bubble.classList.remove("streaming");
+					bubble.innerHTML = `<span style="color:var(--danger)">错误：${escapeHtml(event.message)}</span>`;
+				}
+			}
+		}
+	} catch (error) {
+		bubble.classList.remove("streaming");
+		if (error.message !== "unauthorized") {
+			bubble.innerHTML = `<span style="color:var(--danger)">错误：${escapeHtml(error.message)}</span>`;
+		}
+	} finally {
+		state.streaming = false;
+		$("send").disabled = false;
+		inputEl.focus();
+		refreshConversations();
+	}
+}
+
+$("send").addEventListener("click", send);
+inputEl.addEventListener("keydown", (e) => {
+	if (e.key === "Enter" && !e.shiftKey) {
+		e.preventDefault();
+		send();
+	}
+});
+
+// --- api keys ---
+
+async function loadKeys() {
+	const keys = await api("/api/keys");
+	const list = $("key-list");
+	list.innerHTML = "";
+	if (!keys.length) {
+		list.innerHTML = `<div class="empty">还没有 API Key。添加后对话才会生效。</div>`;
+		return;
+	}
+	for (const key of keys) {
+		const row = document.createElement("div");
+		row.className = "key-row";
+		const sub = [key.maskedKey, key.baseUrl].filter(Boolean).join(" · ");
+		row.innerHTML =
+			`<span class="info"><span class="label">${escapeHtml(key.provider)}${key.label ? " · " + escapeHtml(key.label) : ""}</span><br><span class="sub">${escapeHtml(sub)}</span></span>` +
+			`<button>删除</button>`;
+		row.querySelector("button").addEventListener("click", async () => {
+			if (!confirm("删除该 Key？")) return;
+			await api(`/api/keys/${key.id}`, { method: "DELETE" });
+			loadKeys();
+		});
+		list.appendChild(row);
+	}
+}
+
+$("key-form").addEventListener("submit", async (e) => {
+	e.preventDefault();
+	const payload = {
+		provider: $("key-provider").value,
+		label: $("key-label").value.trim(),
+		apiKey: $("key-value").value.trim(),
+		baseUrl: $("key-provider").value === "openai" ? $("key-base-url").value.trim() : "",
+	};
+	if (!payload.apiKey) return;
+	try {
+		await api("/api/keys", { method: "POST", body: JSON.stringify(payload) });
+		$("key-value").value = "";
+		$("key-base-url").value = "";
+		loadKeys();
+	} catch (error) {
+		if (error.message !== "unauthorized") alert(error.message);
+	}
+});
+
+$("open-keys").addEventListener("click", () => {
+	$("keys-modal").classList.remove("hidden");
+	loadKeys();
+});
+$("close-keys").addEventListener("click", () => $("keys-modal").classList.add("hidden"));
+
+// --- boot ---
+
+applyModelDefaults();
+newChat();
+if (state.token) {
+	api("/api/health").then(refreshAll).catch(() => {});
+} else {
+	showLogin();
+}
+</script>
+</body>
+</html>
