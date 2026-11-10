@@ -125,6 +125,17 @@ async function handleControl(socket, raw) {
 		case "resize":
 			await page.setViewportSize({ width: Math.max(320, message.width), height: Math.max(240, message.height) });
 			break;
+		case "html": {
+			// HTML rendering mode: ship the live DOM so the client can show it in a
+			// sandboxed iframe (selectable text, working links) instead of the frame stream.
+			const html = await page.content();
+			if (html.length > 8_000_000) {
+				sendJson(socket, { type: "error", message: "page HTML too large for html mode" });
+				break;
+			}
+			sendJson(socket, { type: "html", url: page.url(), title: await page.title(), html });
+			break;
+		}
 	}
 }
 

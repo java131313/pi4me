@@ -123,6 +123,23 @@
 	#key-list .key-row .info .sub { color: var(--muted); font-size: 12px; }
 	#key-list .key-row button { color: var(--danger); flex-shrink: 0; }
 	#key-list .empty { color: var(--muted); font-size: 13px; }
+
+	#browser-panel {
+		position: fixed; top: 0; right: 0; width: min(1100px, 94vw); height: 100vh; z-index: 20;
+		background: var(--panel); border-left: 1px solid var(--border);
+		display: flex; flex-direction: column;
+	}
+	#browser-panel.hidden { display: none; }
+	.browser-bar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+	.browser-bar input { flex: 1; }
+	#browser-status { color: var(--muted); font-size: 12px; flex-shrink: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#browser-canvas {
+		flex: 1; width: 100%; min-height: 0; background: #fff; outline: none; cursor: default;
+	}
+	#browser-canvas:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+	.browser-hint { color: var(--muted); font-size: 12px; padding: 6px 12px; border-top: 1px solid var(--border); }
+	.mode-btn.active { border-color: var(--accent); color: var(--accent); }
+	#browser-html { flex: 1; width: 100%; min-height: 0; border: none; background: #fff; }
 </style>
 </head>
 <body>
@@ -135,6 +152,7 @@
 		<div id="conv-list"></div>
 		<div class="side-foot">
 			<button id="open-keys">API Keys</button>
+			<button id="open-browser">浏览器</button>
 			<button id="logout">退出</button>
 		</div>
 	</aside>
@@ -185,6 +203,20 @@
 		</form>
 		<div id="key-list"></div>
 	</div>
+</div>
+
+<div id="browser-panel" class="hidden">
+	<div class="browser-bar">
+		<input id="browser-url" placeholder="输入网址，Enter 打开" autocomplete="off">
+		<button id="browser-go" class="primary">打开</button>
+		<button id="browser-mode-canvas" class="mode-btn active">画面</button>
+		<button id="browser-mode-html" class="mode-btn">HTML</button>
+		<span id="browser-status"></span>
+		<button id="close-browser">关闭</button>
+	</div>
+	<canvas id="browser-canvas" tabindex="0"></canvas>
+	<iframe id="browser-html" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" style="display:none"></iframe>
+	<div class="browser-hint">画面模式：点击画布后可用鼠标键盘。HTML 模式：文字可选中复制、链接直接点。中文输入请在 HTML 模式的输入框里用。</div>
 </div>
 
 <script>
@@ -521,12 +553,170 @@ $("open-keys").addEventListener("click", () => {
 });
 $("close-keys").addEventListener("click", () => $("keys-modal").classList.add("hidden"));
 
+// --- remote browser panel ---
+
+const browser = { ws: null, canvas: null, ctx: null, resizeTimer: null, mode: "canvas" };
+
+function browserSend(message) {
+	if (browser.ws && browser.ws.readyState === 1) browser.ws.send(JSON.stringify(message));
+}
+
+function requestBrowserHtml() {
+	browserSend({ type: "html" });
+	$("browser-status").textContent = "加载 HTML…";
+}
+
+function setBrowserMode(mode) {
+	browser.mode = mode;
+	$("browser-mode-canvas").classList.toggle("active", mode === "canvas");
+	$("browser-mode-html").classList.toggle("active", mode === "html");
+	$("browser-canvas").style.display = mode === "canvas" ? "" : "none";
+	$("browser-html").style.display = mode === "html" ? "" : "none";
+	if (mode === "html") requestBrowserHtml();
+	else $("browser-status").textContent = "已连接";
+}
+
+async function connectBrowser() {
+	const cfg = await api("/api/browser/config");
+	const url = new URL(cfg.url);
+	url.searchParams.set("token", cfg.token);
+	const ws = new WebSocket(url);
+	browser.ws = ws;
+	ws.binaryType = "blob";
+	ws.onopen = () => {
+		$("browser-status").textContent = "已连接";
+		sizeBrowserCanvas();
+	};
+	ws.onclose = () => {
+		$("browser-status").textContent = "连接已断开";
+	};
+	ws.onerror = () => {
+		$("browser-status").textContent = "连接失败";
+	};
+	ws.onmessage = async (event) => {
+		if (typeof event.data === "string") {
+			const message = JSON.parse(event.data);
+			if (message.type === "ready" || message.type === "navigated") {
+				$("browser-url").value = message.url === "about:blank" ? "" : message.url;
+				if (browser.mode === "html") requestBrowserHtml();
+			} else if (message.type === "html") {
+				$("browser-status").textContent = "已连接";
+				const doc = `<base href="${message.url.replace(/"/g, "&quot;")}"><title>${(message.title || "").replace(/</g, "&lt;")}</title>${message.html}`;
+				$("browser-html").srcdoc = doc;
+			} else if (message.type === "error") {
+				$("browser-status").textContent = message.message;
+			}
+			return;
+		}
+		if (browser.mode !== "canvas") return;
+		const bitmap = await createImageBitmap(event.data);
+		browser.ctx.drawImage(bitmap, 0, 0);
+		bitmap.close();
+	};
+}
+
+function sizeBrowserCanvas() {
+	const canvas = browser.canvas;
+	const panel = $("browser-panel");
+	const bar = panel.querySelector(".browser-bar");
+	const hint = panel.querySelector(".browser-hint");
+	const width = Math.max(640, Math.floor(panel.clientWidth));
+	const height = Math.max(400, Math.floor(panel.clientHeight - bar.offsetHeight - hint.offsetHeight));
+	canvas.width = width;
+	canvas.height = height;
+	browserSend({ type: "resize", width, height });
+}
+
+function openBrowser() {
+	$("browser-panel").classList.remove("hidden");
+	if (!browser.canvas) {
+		browser.canvas = $("browser-canvas");
+		browser.ctx = browser.canvas.getContext("2d");
+		wireBrowserInput();
+	}
+	if (!browser.ws || browser.ws.readyState > 1) {
+		connectBrowser().catch((error) => {
+			$("browser-status").textContent = error.message === "unauthorized" ? "" : error.message;
+		});
+	} else {
+		sizeBrowserCanvas();
+	}
+}
+
+function wireBrowserInput() {
+	const canvas = browser.canvas;
+	const coords = (event) => {
+		const rect = canvas.getBoundingClientRect();
+		return {
+			x: Math.round((event.clientX - rect.left) * (canvas.width / rect.width)),
+			y: Math.round((event.clientY - rect.top) * (canvas.height / rect.height)),
+		};
+	};
+	canvas.addEventListener("mousedown", (event) => {
+		canvas.focus();
+		const { x, y } = coords(event);
+		browserSend({ type: "click", x, y, button: event.button === 2 ? "right" : "left", clickCount: event.detail });
+		event.preventDefault();
+	});
+	canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+	let lastMove = 0;
+	canvas.addEventListener("mousemove", (event) => {
+		const now = Date.now();
+		if (now - lastMove < 30) return;
+		lastMove = now;
+		const { x, y } = coords(event);
+		browserSend({ type: "move", x, y });
+	});
+	canvas.addEventListener("wheel", (event) => {
+		browserSend({ type: "wheel", deltaX: Math.round(event.deltaX), deltaY: Math.round(event.deltaY) });
+		event.preventDefault();
+	}, { passive: false });
+	canvas.addEventListener("keydown", (event) => {
+		if (event.ctrlKey || event.metaKey) {
+			if (event.key.length === 1) {
+				browserSend({ type: "key", key: `Control+${event.key.toLowerCase()}` });
+				event.preventDefault();
+			}
+			return;
+		}
+		const special = {
+			Enter: "Enter", Tab: "Tab", Backspace: "Backspace", Delete: "Delete", Escape: "Escape",
+			ArrowUp: "ArrowUp", ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight",
+			Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown",
+		};
+		if (special[event.key]) browserSend({ type: "key", key: special[event.key] });
+		else if (event.key.length === 1) browserSend({ type: "text", text: event.key });
+		event.preventDefault();
+	});
+}
+
+$("open-browser").addEventListener("click", openBrowser);
+$("close-browser").addEventListener("click", () => $("browser-panel").classList.add("hidden"));
+$("browser-mode-canvas").addEventListener("click", () => setBrowserMode("canvas"));
+$("browser-mode-html").addEventListener("click", () => setBrowserMode("html"));
+$("browser-go").addEventListener("click", () => {
+	const url = $("browser-url").value.trim();
+	if (url) browserSend({ type: "navigate", url });
+});
+$("browser-url").addEventListener("keydown", (event) => {
+	if (event.key === "Enter") {
+		const url = $("browser-url").value.trim();
+		if (url) browserSend({ type: "navigate", url });
+	}
+});
+window.addEventListener("resize", () => {
+	if (!$("browser-panel").classList.contains("hidden")) sizeBrowserCanvas();
+});
+
 // --- boot ---
 
 applyModelDefaults();
 newChat();
 if (state.token) {
 	api("/api/health").then(refreshAll).catch(() => {});
+	api("/api/browser/config").catch(() => {
+		$("open-browser").style.display = "none";
+	});
 } else {
 	showLogin();
 }
