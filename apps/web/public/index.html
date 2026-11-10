@@ -210,13 +210,14 @@
 		<input id="browser-url" placeholder="输入网址，Enter 打开" autocomplete="off">
 		<button id="browser-go" class="primary">打开</button>
 		<button id="browser-mode-canvas" class="mode-btn active">画面</button>
-		<button id="browser-mode-html" class="mode-btn">HTML</button>
+		<button id="browser-mode-article" class="mode-btn">阅读</button>
+		<button id="browser-mode-full" class="mode-btn">完整</button>
 		<span id="browser-status"></span>
 		<button id="close-browser">关闭</button>
 	</div>
 	<canvas id="browser-canvas" tabindex="0"></canvas>
 	<iframe id="browser-html" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" style="display:none"></iframe>
-	<div class="browser-hint">画面模式：点击画布后可用鼠标键盘。HTML 模式：文字可选中复制、链接直接点。中文输入请在 HTML 模式的输入框里用。</div>
+	<div class="browser-hint">画面：真实渲染可交互。阅读：提取正文、最快。完整：整页 HTML，资源多的站会慢。中文输入在阅读/完整模式的输入框里用。</div>
 </div>
 
 <script>
@@ -555,25 +556,28 @@ $("close-keys").addEventListener("click", () => $("keys-modal").classList.add("h
 
 // --- remote browser panel ---
 
-const browser = { ws: null, canvas: null, ctx: null, resizeTimer: null, mode: "canvas" };
+const browser = { ws: null, canvas: null, ctx: null, mode: "canvas" };
+let pendingHtmlMeta = null;
 
 function browserSend(message) {
 	if (browser.ws && browser.ws.readyState === 1) browser.ws.send(JSON.stringify(message));
 }
 
 function requestBrowserHtml() {
-	browserSend({ type: "html" });
+	browserSend({ type: "html", article: browser.mode === "article" });
 	$("browser-status").textContent = "加载 HTML…";
 }
 
 function setBrowserMode(mode) {
 	browser.mode = mode;
+	pendingHtmlMeta = null;
 	$("browser-mode-canvas").classList.toggle("active", mode === "canvas");
-	$("browser-mode-html").classList.toggle("active", mode === "html");
+	$("browser-mode-article").classList.toggle("active", mode === "article");
+	$("browser-mode-full").classList.toggle("active", mode === "full");
 	$("browser-canvas").style.display = mode === "canvas" ? "" : "none";
-	$("browser-html").style.display = mode === "html" ? "" : "none";
-	if (mode === "html") requestBrowserHtml();
-	else $("browser-status").textContent = "已连接";
+	$("browser-html").style.display = mode === "canvas" ? "none" : "";
+	if (mode === "canvas") $("browser-status").textContent = "已连接";
+	else requestBrowserHtml();
 }
 
 async function connectBrowser() {
@@ -598,14 +602,23 @@ async function connectBrowser() {
 			const message = JSON.parse(event.data);
 			if (message.type === "ready" || message.type === "navigated") {
 				$("browser-url").value = message.url === "about:blank" ? "" : message.url;
-				if (browser.mode === "html") requestBrowserHtml();
-			} else if (message.type === "html") {
-				$("browser-status").textContent = "已连接";
-				const doc = `<base href="${message.url.replace(/"/g, "&quot;")}"><title>${(message.title || "").replace(/</g, "&lt;")}</title>${message.html}`;
-				$("browser-html").srcdoc = doc;
+				if (browser.mode !== "canvas") requestBrowserHtml();
+			} else if (message.type === "html-meta") {
+				// Followed immediately by one binary frame carrying the HTML document.
+				pendingHtmlMeta = message;
 			} else if (message.type === "error") {
 				$("browser-status").textContent = message.message;
 			}
+			return;
+		}
+		// Binary frame: the html payload when a meta precedes it, else a screencast frame.
+		if (pendingHtmlMeta) {
+			const meta = pendingHtmlMeta;
+			pendingHtmlMeta = null;
+			$("browser-status").textContent = meta.article ? "阅读模式" : "已连接";
+			const html = await event.data.text();
+			$("browser-url").value = meta.url === "about:blank" ? "" : meta.url;
+			$("browser-html").srcdoc = html;
 			return;
 		}
 		if (browser.mode !== "canvas") return;
@@ -693,7 +706,8 @@ function wireBrowserInput() {
 $("open-browser").addEventListener("click", openBrowser);
 $("close-browser").addEventListener("click", () => $("browser-panel").classList.add("hidden"));
 $("browser-mode-canvas").addEventListener("click", () => setBrowserMode("canvas"));
-$("browser-mode-html").addEventListener("click", () => setBrowserMode("html"));
+$("browser-mode-article").addEventListener("click", () => setBrowserMode("article"));
+$("browser-mode-full").addEventListener("click", () => setBrowserMode("full"));
 $("browser-go").addEventListener("click", () => {
 	const url = $("browser-url").value.trim();
 	if (url) browserSend({ type: "navigate", url });

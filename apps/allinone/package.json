@@ -12,6 +12,8 @@
 		"node": ">=22.19"
 	},
 	"dependencies": {
+		"@mozilla/readability": "0.6.0",
+		"linkedom": "0.18.15",
 		"pg": "8.23.1",
 		"playwright-core": "1.65.0",
 		"ws": "8.22.2"

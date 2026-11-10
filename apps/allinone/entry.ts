@@ -20,6 +20,7 @@ const workerModule = (await import(resolvePath("./web-src/worker.ts", "../web/sr
 const browserService = (await import(resolvePath("./browser-service.js", "../browser/server.js"))) as {
 	handleServiceRequest(req: IncomingMessage, res: ServerResponse): Promise<void>;
 	handleUpgrade(req: IncomingMessage, socket: import("node:net").Socket, head: Buffer): void;
+	warmupBrowser(): void;
 };
 const indexHtml = readFileSync(new URL(resolvePath("./public/index.html", "../web/public/index.html"), here));
 
@@ -73,3 +74,4 @@ const server = createServer((req, res) => {
 server.on("upgrade", (req, socket, head) => browserService.handleUpgrade(req, socket, head));
 
 server.listen(PORT, () => console.log(`pi-web all-in-one listening on :${PORT}`));
+browserService.warmupBrowser();

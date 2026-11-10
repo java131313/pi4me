@@ -5,8 +5,10 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
+import { parseHTML } from "linkedom";
 import { chromium } from "playwright-core";
 import { WebSocketServer } from "ws";
 
@@ -19,6 +21,35 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 // One always-on Render free instance then covers both services within the 750h budget.
 const RELAY_TOKEN = process.env.RELAY_TOKEN ?? "";
 const KIMI_UPSTREAM = "https://api.kimi.com";
+
+// Readability runs in Node against the page HTML parsed by linkedom (the package ships
+// no browser bundle; evaluating its CJS source in the page breaks under CSP anyway).
+const { Readability } = createRequire(import.meta.url)("@mozilla/readability");
+
+const ARTICLE_CSS =
+	"body{font-family:-apple-system,'PingFang SC','Segoe UI',sans-serif;line-height:1.7;margin:0;padding:24px;background:#fafafa;color:#222}" +
+	"article{max-width:680px;margin:0 auto;background:#fff;padding:32px 40px}img,video{max-width:100%;height:auto}h1{font-size:1.5em}pre{overflow-x:auto;background:#f4f4f4;padding:12px}";
+
+// Launch chromium at boot (Render health check only needs /healthz, so this runs in the
+// background): the first panel open then skips the 60-90s cold launch on a free instance.
+export function warmupBrowser() {
+	void ensurePage().catch((error) => console.error("browser warmup failed:", error.message));
+}
+
+async function extractArticle(page, url) {
+	try {
+		const { document } = parseHTML(await page.content());
+		const parsed = new Readability(document, { url }).parse();
+		return parsed ? { title: parsed.title, content: parsed.content } : null;
+	} catch {
+		return null;
+	}
+}
+
+function buildArticleHtml(article, url) {
+	const escape = (text) => (text ?? "").replace(/</g, "&lt;");
+	return `<!doctype html><html><head><meta charset="utf-8"><base href="${escape(url).replace(/"/g, "&quot;")}"><title>${escape(article.title)}</title><style>${ARTICLE_CSS}</style></head><body><article><h1>${escape(article.title)}</h1>${article.content}</article></body></html>`;
+}
 
 let browserPromise = null;
 let page = null;
@@ -88,10 +119,10 @@ async function startScreencast(socket) {
 	});
 	await session.send("Page.startScreencast", {
 		format: "jpeg",
-		quality: 70,
+		quality: 50,
 		everyNthFrame: 2,
-		maxWidth: 1920,
-		maxHeight: 1080,
+		maxWidth: 1280,
+		maxHeight: 720,
 	});
 }
 
@@ -128,14 +159,21 @@ async function handleControl(socket, raw) {
 			await page.setViewportSize({ width: Math.max(320, message.width), height: Math.max(240, message.height) });
 			break;
 		case "html": {
-			// HTML rendering mode: ship the live DOM so the client can show it in a
-			// sandboxed iframe (selectable text, working links) instead of the frame stream.
-			const html = await page.content();
+			// HTML rendering mode: send the page as one binary WS frame (JSON-escaping
+			// multi-MB HTML was a major slowdown). article:true runs Readability first
+			// and falls back to the full DOM when extraction yields nothing.
+			const title = await page.title();
+			const url = page.url();
+			const article = message.article ? await extractArticle(page, url) : null;
+			const html = article
+				? buildArticleHtml(article, url)
+				: await page.content();
 			if (html.length > 8_000_000) {
 				sendJson(socket, { type: "error", message: "page HTML too large for html mode" });
 				break;
 			}
-			sendJson(socket, { type: "html", url: page.url(), title: await page.title(), html });
+			sendJson(socket, { type: "html-meta", url, title, article: article !== null });
+			socket.send(Buffer.from(html, "utf8"));
 			break;
 		}
 	}
@@ -288,4 +326,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 	});
 	httpServer.on("upgrade", handleUpgrade);
 	httpServer.listen(PORT, () => console.log(`browser service listening on :${PORT}, chromium: ${EXECUTABLE_PATH}`));
+	warmupBrowser();
 }
