@@ -1,0 +1,17 @@
+{
+	"name": "pi-web-browser",
+	"private": true,
+	"version": "0.0.1",
+	"description": "Remote headless-Chromium streaming service for pi-web (screencast over WebSocket)",
+	"type": "module",
+	"scripts": {
+		"start": "node server.js"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"dependencies": {
+		"playwright-core": "1.65.0",
+		"ws": "8.22.2"
+	}
+}
