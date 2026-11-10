@@ -51,6 +51,10 @@ const server = createServer((req, res) => {
 	const controller = new AbortController();
 	res.on("close", () => controller.abort());
 
+	const chunks = [];
+	for await (const chunk of req) chunks.push(chunk);
+	// Buffer the (small) request body instead of streaming it: Node >= 25 undici rejects
+	// streaming request bodies, and chat request payloads never exceed a few KB.
 	fetch(`${UPSTREAM}${url.pathname}${url.search}`, {
 		method: req.method,
 		headers: {
@@ -58,9 +62,8 @@ const server = createServer((req, res) => {
 			"content-type": req.headers["content-type"] ?? "application/json",
 			accept: req.headers.accept ?? "text/event-stream",
 		},
-		body: req.method === "GET" || req.method === "HEAD" ? undefined : req,
+		body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
 		signal: controller.signal,
-		duplex: "half",
 	})
 		.then((upstream) => {
 			const headers = {};

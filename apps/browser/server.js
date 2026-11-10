@@ -5,6 +5,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import { chromium } from "playwright-core";
 import { WebSocketServer } from "ws";
 
@@ -12,6 +13,11 @@ const PORT = Number(process.env.PORT ?? 3000);
 const TOKEN = process.env.BROWSER_TOKEN ?? "";
 const EXECUTABLE_PATH = process.env.CHROMIUM_PATH ?? "/usr/bin/chromium";
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+// Kimi relay folded into the same process: one public port serves the browser WebSocket
+// at /ws and the api.kimi.com passthrough at /coding/* (standalone version: apps/relay).
+// One always-on Render free instance then covers both services within the 750h budget.
+const RELAY_TOKEN = process.env.RELAY_TOKEN ?? "";
+const KIMI_UPSTREAM = "https://api.kimi.com";
 
 if (!TOKEN) {
 	console.error("BROWSER_TOKEN env var is required");
@@ -140,20 +146,81 @@ async function handleControl(socket, raw) {
 }
 
 const httpServer = createServer((req, res) => {
-	if (req.method === "GET" && req.url === "/healthz") {
+	const url = new URL(req.url ?? "/", "http://localhost");
+	if (req.method === "GET" && url.pathname === "/healthz") {
 		res.writeHead(200, { "content-type": "application/json" });
-		res.end(JSON.stringify({ ok: true, hasPage: page !== null }));
+		res.end(JSON.stringify({ ok: true, hasPage: page !== null, relay: RELAY_TOKEN !== "" }));
+		return;
+	}
+	if (url.pathname.startsWith("/coding/")) {
+		handleRelay(req, res, url).catch((error) => {
+			if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: `relay upstream error: ${error instanceof Error ? error.message : String(error)}` }));
+		});
 		return;
 	}
 	res.writeHead(404, { "content-type": "application/json" });
 	res.end(JSON.stringify({ error: "not found" }));
 });
 
+// --- Kimi relay passthrough (identical semantics to apps/relay/server.mjs) ---
+
+const DROP_RESPONSE_HEADERS = new Set(["transfer-encoding", "connection", "keep-alive", "content-encoding"]);
+
+function relayForbidden(res, message) {
+	res.writeHead(403, { "content-type": "application/json" });
+	res.end(JSON.stringify({ error: message }));
+}
+
+function relayTokenOk(provided) {
+	const a = Buffer.from(String(provided ?? ""));
+	const b = Buffer.from(RELAY_TOKEN);
+	return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function handleRelay(req, res, url) {
+	if (!RELAY_TOKEN) {
+		relayForbidden(res, "relay is not configured");
+		return;
+	}
+	if (!relayTokenOk(req.headers["x-relay-key"])) {
+		relayForbidden(res, "invalid relay key");
+		return;
+	}
+	const controller = new AbortController();
+	res.on("close", () => controller.abort());
+	const chunks = [];
+	for await (const chunk of req) chunks.push(chunk);
+	// Buffer the (small) request body instead of streaming it: Node >= 25 undici rejects
+	// streaming request bodies, and chat request payloads never exceed a few KB.
+	const upstream = await fetch(`${KIMI_UPSTREAM}${url.pathname}${url.search}`, {
+		method: req.method,
+		headers: {
+			authorization: req.headers.authorization ?? "",
+			"content-type": req.headers["content-type"] ?? "application/json",
+			accept: req.headers.accept ?? "text/event-stream",
+		},
+		body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
+		signal: controller.signal,
+	});
+	const headers = {};
+	for (const [name, value] of upstream.headers) {
+		if (!DROP_RESPONSE_HEADERS.has(name)) headers[name] = value;
+	}
+	res.writeHead(upstream.status, headers);
+	if (upstream.body) {
+		Readable.fromWeb(upstream.body).pipe(res);
+	} else {
+		res.end();
+	}
+	console.log(`relay ${req.method} ${url.pathname} -> ${upstream.status}`);
+}
+
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on("connection", (socket, req) => {
 	const url = new URL(req.url ?? "/", "http://localhost");
-	if (!tokenOk(url.searchParams.get("token"))) {
+	if (url.pathname !== "/ws" || !tokenOk(url.searchParams.get("token"))) {
 		socket.close(4001, "invalid token");
 		return;
 	}
