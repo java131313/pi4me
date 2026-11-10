@@ -17,6 +17,9 @@ function newClient(env: { DATABASE_URL: string }): PgClient {
 	});
 }
 
+// A fresh short-lived connection per use: caching connections across requests hangs on
+// Workers (the socket never becomes readable again after the request that created it).
+// A per-chat-turn latency win instead comes from Cloudflare Hyperdrive, not from pooling here.
 export async function withDb<T>(env: { DATABASE_URL: string }, fn: (client: PgClient) => Promise<T>): Promise<T> {
 	const client = newClient(env);
 	await client.connect();

@@ -26,6 +26,9 @@ export interface Env {
 	// Optional Kimi relay (apps/relay): api.kimi.com blocks Cloudflare Workers IPs.
 	KIMI_RELAY_URL?: string;
 	KIMI_RELAY_TOKEN?: string;
+	// Optional remote browser service (apps/browser): WebSocket endpoint + shared secret.
+	BROWSER_WS_URL?: string;
+	BROWSER_TOKEN?: string;
 }
 
 // Model suggestions mirror pi's model catalog; the UI accepts any model id.
@@ -163,6 +166,15 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
 	if (path === "/api/chat" && method === "POST") {
 		return chat(request, env);
+	}
+
+	// Remote browser (apps/browser): hands the WebSocket endpoint + shared secret to the
+	// authenticated UI. Deliberately delivered to the client — the pi-web token is the gate.
+	if (path === "/api/browser/config" && method === "GET") {
+		if (!env.BROWSER_WS_URL || !env.BROWSER_TOKEN) {
+			return json({ error: "browser service not configured" }, 404);
+		}
+		return json({ url: env.BROWSER_WS_URL, token: env.BROWSER_TOKEN });
 	}
 
 	return json({ error: "not found" }, 404);
