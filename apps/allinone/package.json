@@ -1,0 +1,19 @@
+{
+	"name": "pi-web-allinone",
+	"private": true,
+	"version": "0.0.1",
+	"description": "pi-web all-in-one: chat UI + API + remote browser + Kimi relay in one container",
+	"type": "module",
+	"scripts": {
+		"start": "node --experimental-strip-types entry.ts",
+		"dev": "node --experimental-strip-types entry.ts"
+	},
+	"engines": {
+		"node": ">=22.19"
+	},
+	"dependencies": {
+		"pg": "8.23.1",
+		"playwright-core": "1.65.0",
+		"ws": "8.22.2"
+	}
+}

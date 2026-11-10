@@ -1,0 +1,10 @@
+# Build context for the all-in-one image (Render builds from the repo root).
+.git
+**/node_modules
+**/.wrangler
+**/.dev.vars
+.artifacts
+packages
+scripts
+nix
+*.log

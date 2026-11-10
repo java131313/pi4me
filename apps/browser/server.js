@@ -6,6 +6,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 import { WebSocketServer } from "ws";
 
@@ -18,11 +19,6 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 // One always-on Render free instance then covers both services within the 750h budget.
 const RELAY_TOKEN = process.env.RELAY_TOKEN ?? "";
 const KIMI_UPSTREAM = "https://api.kimi.com";
-
-if (!TOKEN) {
-	console.error("BROWSER_TOKEN env var is required");
-	process.exit(1);
-}
 
 let browserPromise = null;
 let page = null;
@@ -145,7 +141,9 @@ async function handleControl(socket, raw) {
 	}
 }
 
-const httpServer = createServer((req, res) => {
+// Request handler shared by standalone mode and the all-in-one server (apps/allinone):
+// health check, Kimi relay passthrough, 404 for everything else.
+export async function handleServiceRequest(req, res) {
 	const url = new URL(req.url ?? "/", "http://localhost");
 	if (req.method === "GET" && url.pathname === "/healthz") {
 		res.writeHead(200, { "content-type": "application/json" });
@@ -153,15 +151,12 @@ const httpServer = createServer((req, res) => {
 		return;
 	}
 	if (url.pathname.startsWith("/coding/")) {
-		handleRelay(req, res, url).catch((error) => {
-			if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
-			res.end(JSON.stringify({ error: `relay upstream error: ${error instanceof Error ? error.message : String(error)}` }));
-		});
+		await handleRelay(req, res, url);
 		return;
 	}
 	res.writeHead(404, { "content-type": "application/json" });
 	res.end(JSON.stringify({ error: "not found" }));
-});
+}
 
 // --- Kimi relay passthrough (identical semantics to apps/relay/server.mjs) ---
 
@@ -216,7 +211,20 @@ async function handleRelay(req, res, url) {
 	console.log(`relay ${req.method} ${url.pathname} -> ${upstream.status}`);
 }
 
-const wss = new WebSocketServer({ server: httpServer });
+const wss = new WebSocketServer({ noServer: true });
+
+// Route WebSocket upgrades: only /ws belongs to the browser service; anything else
+// (the all-in-one server shares the port) is dropped.
+export function handleUpgrade(req, socket, head) {
+	const url = new URL(req.url ?? "/", "http://localhost");
+	if (url.pathname !== "/ws") {
+		socket.destroy();
+		return;
+	}
+	wss.handleUpgrade(req, socket, head, (ws) => {
+		wss.emit("connection", ws, req);
+	});
+}
 
 wss.on("connection", (socket, req) => {
 	const url = new URL(req.url ?? "/", "http://localhost");
@@ -265,4 +273,19 @@ wss.on("connection", (socket, req) => {
 	});
 });
 
-httpServer.listen(PORT, () => console.log(`browser service listening on :${PORT}, chromium: ${EXECUTABLE_PATH}`));
+// Standalone mode (`node server.js`): serve healthz/relay/browser on one port.
+// When imported by the all-in-one server, that entrypoint owns the HTTP server instead.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	if (!TOKEN) {
+		console.error("BROWSER_TOKEN env var is required");
+		process.exit(1);
+	}
+	const httpServer = createServer((req, res) => {
+		handleServiceRequest(req, res).catch((error) => {
+			if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+		});
+	});
+	httpServer.on("upgrade", handleUpgrade);
+	httpServer.listen(PORT, () => console.log(`browser service listening on :${PORT}, chromium: ${EXECUTABLE_PATH}`));
+}
