@@ -152,6 +152,20 @@ wss.on("connection", (socket, req) => {
 		return;
 	}
 	activeSocket = socket;
+	socket.isAlive = true;
+	socket.on("pong", () => {
+		socket.isAlive = true;
+	});
+	// Dead clients (unclean disconnects, vanished tabs) otherwise hold the single slot forever.
+	const heartbeat = setInterval(() => {
+		if (!socket.isAlive) {
+			clearInterval(heartbeat);
+			socket.terminate();
+			return;
+		}
+		socket.isAlive = false;
+		socket.ping();
+	}, 25_000);
 	void ensurePage().then(async () => {
 		sendJson(socket, { type: "ready", url: page?.url() ?? "about:blank" });
 		await startScreencast(socket);
@@ -163,7 +177,12 @@ wss.on("connection", (socket, req) => {
 			sendJson(socket, { type: "error", message: error instanceof Error ? error.message : String(error) }),
 		);
 	});
+	socket.on("error", () => {
+		clearInterval(heartbeat);
+		if (activeSocket === socket) activeSocket = null;
+	});
 	socket.on("close", () => {
+		clearInterval(heartbeat);
 		if (activeSocket === socket) activeSocket = null;
 	});
 });
